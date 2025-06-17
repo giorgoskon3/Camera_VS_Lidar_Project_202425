@@ -206,7 +206,7 @@ class RoadSegmenter:
         self.show_results()
     
 if __name__ == "__main__":
-    path = "image_2/um_000003.png"
+    path = "image_2/um_000047.png"
     segmenter = RoadSegmenter(path)
     segmenter.run()
     # segmenter.save_results(path)
