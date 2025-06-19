@@ -157,20 +157,19 @@ class RoadSegmenter:
         print(f"Midline PCA vector: {direction}")
 
     def show_results(self):
-        """Εμφανίζει τα στάδια της επεξεργασίας εικόνας με επαγγελματική παρουσίαση."""
-        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        fig, axes = plt.subplots(3, 1, figsize=(8, 15))
 
         # Original Image
         axes[0].imshow(cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB))
         axes[0].set_title("Original Image", fontsize=14, fontweight='bold')
         axes[0].axis('off')
 
-        # Segmented Region (π.χ. από flood fill)
+        # Segmented Region
         axes[1].imshow(self.filled_region, cmap='gray')
         axes[1].set_title("Segmented Road Region", fontsize=14, fontweight='bold')
         axes[1].axis('off')
 
-        # Final result with colored lanes
+        # Final result
         axes[2].imshow(cv2.cvtColor(self.result, cv2.COLOR_BGR2RGB))
         axes[2].set_title("Detected Lanes", fontsize=14, fontweight='bold')
         axes[2].axis('off')
@@ -206,7 +205,7 @@ class RoadSegmenter:
         self.show_results()
     
 if __name__ == "__main__":
-    path = "image_2/um_000047.png"
+    path = "image_2/um_000000.png"
     segmenter = RoadSegmenter(path)
     segmenter.run()
     # segmenter.save_results(path)
