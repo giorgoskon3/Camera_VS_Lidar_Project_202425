@@ -2,76 +2,74 @@ import os
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.signal import savgol_filter
 from ultralytics import YOLO
 from sklearn.decomposition import PCA
+from sklearn.cluster import DBSCAN
 
 class RoadSegmenter:
     def __init__(self, path):
         self.path = path
         self.image = None
+        self.right_image = None
         self.gray = None
-        self.midline_x = None
         self.result = None
 
     def load_images(self):
-        self.image = cv2.imread(self.path)
-
-        if self.image is None:
+        self.image = cv2.imread(self.path) # Load the image
+        self.right_image = cv2.imread(self.path.replace("image_2", "right_images")) # Load the corresponding right image
+        if self.image is None: # Check if the image was loaded successfully
             raise ValueError("Could not load the image.")
 
         # Convert to grayscale
-        clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8,8))
         self.gray = cv2.cvtColor(self.image, cv2.COLOR_BGR2GRAY)
+        self.right_gray = cv2.cvtColor(self.right_image, cv2.COLOR_BGR2GRAY)
+        # Optionally apply Clahe filter
+        # clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8,8))
         # self.gray = clahe.apply(self.gray)
     
     def detect_edges(self):
-        blurred = cv2.GaussianBlur(self.gray, (5, 5), 5)
-        self.edges = cv2.Canny(blurred, 100, 180)
+        blurred = cv2.GaussianBlur(self.gray, (5, 5), 5) # Apply Gaussian blur to reduce noise
+        self.edges = cv2.Canny(blurred, 100, 180) # Detect edges using Canny edge detection
 
     def region_grow(self):
-        height, width = self.gray.shape
-        seed_point = (width // 2, height - 30)
-        cv2.circle(self.image, seed_point, 5, (0, 255, 255), -1)
+        height, width = self.gray.shape # Get the dimensions of the grayscale image
+        seed_point = (width // 2, height - 30) # Define a seed point for region growing
+        # cv2.circle(self.image, seed_point, 5, (0, 255, 255), -1)  # Draw the seed point on the original image
 
-        mask = np.zeros((height + 2, width + 2), np.uint8)
+        mask = np.zeros((height + 2, width + 2), np.uint8) # Create a mask for flood fill
         flooded = self.gray.copy()
-        cv2.floodFill(flooded, mask, seed_point, 125, loDiff=5, upDiff=5, flags=8)
-        self.region = mask[1:-1, 1:-1]
         
-        # Cut 40 % of top of the image
-        cutoff_row = int(height * 0.4)
-        self.region[:cutoff_row, :] = 0
+        cutoff_row = int(height * 0.5) # Define a cutoff row for the flood fill
+        flooded[:cutoff_row, :] = 0 # Set the upper half of the image to zero
+
+        cv2.floodFill(flooded, mask, seed_point, 125, loDiff=5, upDiff=5, flags=8) # Perform flood fill to segment the road region
+        self.region = mask[1:-1, 1:-1] # Remove the border added by flood fill
         
-        self.filled_region = cv2.morphologyEx(self.region, cv2.MORPH_CLOSE, np.ones((6, 6), np.uint8))
+        self.filled_region = cv2.morphologyEx(self.region, cv2.MORPH_CLOSE, np.ones((6, 6), np.uint8)) # Close small holes in the filled region
 
     def colorize_lanes(self, alpha=0.2):
-        road_mask = self.filled_region.astype(np.uint8) * 255
-        height, width = road_mask.shape
-        midline = np.zeros_like(road_mask)
-        left_mask = np.zeros_like(road_mask)
-        right_mask = np.zeros_like(road_mask)
+        road_mask = self.filled_region.astype(np.uint8) * 255 # Convert the filled region το 0/255 mask
+        height, _ = road_mask.shape # Get the dimensions of the road mask
+        midline = np.zeros_like(road_mask) # Create an empty mask for the midline
+        left_mask = np.zeros_like(road_mask) # Create an empty mask for the left lane
+        right_mask = np.zeros_like(road_mask) # Create an empty mask for the right lane
 
-        mid_x_vals = []
+        mid_x_vals = [] # List to store midline x-coordinates
 
-        for y in range(height):
-            x_coords = np.where(road_mask[y] == 255)[0]
+        for y in range(height): # Iterate through each column of the road mask
+            x_coords = np.where(road_mask[y] == 255)[0] # Get the x-coordinates of the road pixels in the current row
             if len(x_coords) > 1:
-                x_left = x_coords[0]
-                x_right = x_coords[-1]
-                x_mid = (x_left + x_right) // 2
-                mid_x_vals.append(x_mid)
+                x_left = x_coords[0] # Leftmost x-coordinate
+                x_right = x_coords[-1] # Rightmost x-coordinate
+                x_mid = (x_left + x_right) // 2  # Midpoint x-coordinate
+                mid_x_vals.append(x_mid) # Store the midline x-coordinate
             else:
-                mid_x_vals.append(-1)
+                mid_x_vals.append(-1) # If no road pixels, append -1
 
-        # Savitzky-Golay
-        mid_x_vals = np.array(mid_x_vals)
-        valid_indices = np.where(mid_x_vals != -1)[0]
-        smoothed = mid_x_vals.copy()
-        if len(valid_indices) > 5:
-            smoothed[valid_indices] = savgol_filter(mid_x_vals[valid_indices], window_length=21, polyorder=2)
-
-        for i, x in enumerate(smoothed):
+        mid_x_vals = np.array(mid_x_vals) # Convert to numpy array for processing
+        self.mid_x_vals = mid_x_vals # Store midline x-coordinates in the instance variable
+        
+        for i, x in enumerate(mid_x_vals):
             if x != -1:
                 x = int(x)
                 midline[i, x] = 255
@@ -119,22 +117,91 @@ class RoadSegmenter:
 
         print(f"Found {len(self.obstacles)} obstacles intersecting the road.")
 
-    def compute_motion_vector_pca(self):
-        height, width = self.filled_region.shape
-        mid_points = []
+    def detect_obstacles_disparity(self, min_disparity=16, block_size=15, depth_thresh=48):
 
-        for y in range(height - 1, 0, -1):
-            x_vals = np.where(self.filled_region[y] == 1)[0]
-            if len(x_vals) > 1:
-                x_mid = (x_vals[0] + x_vals[-1]) // 2
-                mid_points.append([x_mid, y])
+        # Δημιουργία stereo matcher
+        stereo = cv2.StereoSGBM_create(
+            minDisparity=min_disparity,
+            numDisparities=64,
+            blockSize=block_size,
+            P1=8 * 3 * block_size ** 2,
+            P2=32 * 3 * block_size ** 2,
+            mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
+        )
 
-        if len(mid_points) < 2:
-            print("Not enough midline points for PCA.")
+        # Υπολογισμός disparity map
+        disparity = stereo.compute(self.gray, self.right_gray).astype(np.float32) / 16.0
+        self.disparity = disparity
+        
+        # Μάσκα για το δρόμο
+        road_mask = self.filled_region.astype(bool)
+
+        # Κατώφλι βάθους για εμπόδια: μικρό disparity → μεγάλο βάθος → μακριά
+        obstacle_mask = (disparity < depth_thresh) & (disparity > 0) & road_mask
+
+        # Ανίχνευση περιοχών
+        obstacle_mask_uint8 = (obstacle_mask * 255).astype(np.uint8)
+        contours, _ = cv2.findContours(obstacle_mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        self.obstacles = []
+
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            if w * h > 100:  # Απόρριψη μικρών θορύβων
+                self.obstacles.append((x, y, x + w, y + h))
+                cv2.rectangle(self.result, (x, y), (x + w, y + h), (0, 255, 255), 2)
+
+        print(f"Disparity-based: Found {len(self.obstacles)} obstacles on the road.")
+
+    def detect_obstacles_from_disparity(self, eps=10, min_samples=20):
+        disp = self.disparity.copy()
+        valid_mask = (disp > 0) & (disp < 96)  # valid disparity values only
+
+        coords = np.column_stack(np.where(valid_mask))
+        disparity_values = disp[valid_mask].reshape(-1, 1)
+        features = np.hstack([coords, disparity_values])
+
+        if len(features) == 0:
+            print("No valid disparity points found.")
             return
 
-        mid_points = np.array(mid_points)
+        db = DBSCAN(eps=eps, min_samples=min_samples).fit(features)
+        labels = db.labels_
+        unique_labels = set(labels)
+        
+        self.obstacles = []
 
+        for label in unique_labels:
+            if label == -1:
+                continue  # Noise
+            points = coords[labels == label]
+            x_vals = points[:, 1]
+            y_vals = points[:, 0]
+            x1, y1 = np.min(x_vals), np.min(y_vals)
+            x2, y2 = np.max(x_vals), np.max(y_vals)
+
+            self.obstacles.append((x1, y1, x2, y2))
+            cv2.rectangle(self.result, (x1, y1), (x2, y2), (0, 255, 255), 2)
+
+        print(f"DBSCAN: Found {len(self.obstacles)} obstacle regions based on disparity.")
+
+
+    def show_disparity_map(self):
+        disp_display = cv2.normalize(self.disparity, None, 0, 255, cv2.NORM_MINMAX)
+        disp_display = np.uint8(disp_display)
+
+        plt.figure(figsize=(8, 6))
+        plt.imshow(disp_display, cmap='plasma')  # Μπορείς να δοκιμάσεις και 'gray'
+        plt.title("Disparity Map", fontsize=14, fontweight='bold')
+        plt.axis('off')
+        plt.show()
+
+
+    def compute_motion_vector_pca(self):
+        mid_points = []
+        for y, x in enumerate(self.mid_x_vals):
+            if x != -1:
+                mid_points.append([x, y])
         # PCA
         pca = PCA(n_components=2)
         pca.fit(mid_points)
@@ -156,27 +223,33 @@ class RoadSegmenter:
 
         print(f"Midline PCA vector: {direction}")
 
-    def show_results(self):
-        fig, axes = plt.subplots(3, 1, figsize=(8, 15))
-
-        # Original Image
-        axes[0].imshow(cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB))
-        axes[0].set_title("Original Image", fontsize=14, fontweight='bold')
-        axes[0].axis('off')
-
-        # Segmented Region
-        axes[1].imshow(self.filled_region, cmap='gray')
-        axes[1].set_title("Segmented Road Region", fontsize=14, fontweight='bold')
-        axes[1].axis('off')
-
-        # Final result
-        axes[2].imshow(cv2.cvtColor(self.result, cv2.COLOR_BGR2RGB))
-        axes[2].set_title("Detected Lanes", fontsize=14, fontweight='bold')
-        axes[2].axis('off')
-
-        plt.tight_layout()
+    def show_original_image(self):
+        plt.figure(figsize=(8, 6))
+        plt.imshow(cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB))
+        plt.title("1. Αρχική Εικόνα", fontsize=14, fontweight='bold')
+        plt.axis('off')
         plt.show()
 
+    def show_region_result(self):
+        plt.figure(figsize=(8, 6))
+        plt.imshow(cv2.cvtColor(self.result, cv2.COLOR_BGR2RGB))
+        plt.title("2. Ανίχνευση Δρόμου με Region Growing", fontsize=14, fontweight='bold')
+        plt.axis('off')
+        plt.show()
+
+
+    def show_final_result(self):
+        plt.figure(figsize=(8, 6))
+        plt.imshow(cv2.cvtColor(self.result, cv2.COLOR_BGR2RGB))
+        if len(self.obstacles) > 0:
+            title = "3. Εμπόδια πάνω στον Δρόμο"
+        else:
+            title = "3. Διάνυσμα Κίνησης με PCA"
+        plt.title(title, fontsize=14, fontweight='bold')
+        plt.axis('off')
+        plt.show()
+        
+        
     def save_results(self, path):
         # Save Result
         save_dir = "saved_images/partA"
@@ -191,18 +264,22 @@ class RoadSegmenter:
     def run(self):
         # Load Both Left and Right Images and convert to grayscale
         self.load_images()
+        self.show_original_image()
         # a) Using growing region
         self.detect_edges()
         self.region_grow()
         self.colorize_lanes()
+        self.show_region_result()
         
         # b) Detect obstacles using YOLO
+        # self.detect_obstacles_disparity()
+        # self.detect_obstacles_from_disparity()
+        # self.show_disparity_map()
         self.detect_obstacles()
         
         # c) Compute motion vector using PCA
         self.compute_motion_vector_pca()
-        
-        self.show_results()
+        self.show_final_result()
     
 if __name__ == "__main__":
     path = "image_2/um_000000.png"

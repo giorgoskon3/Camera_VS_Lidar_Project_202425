@@ -52,20 +52,19 @@ class RoadSegmenter:
 
     @staticmethod
     def compute_saliency(points, k=30):
-        saliency = np.zeros(len(points))
-        tree = KDTree(points)
+        saliency = np.zeros(len(points)) # Initialize saliency array
+        tree = KDTree(points) # Build KDTree for fast nearest neighbor search
 
-        for i in range(len(points)):
-            idxs = tree.query(points[i : i + 1], k=k, return_distance=False)[0]
-            local_pts = points[idxs]
+        for i in range(len(points)): # Iterate through each point
+            idxs = tree.query(points[i : i + 1], k=k, return_distance=False)[0] # Get k nearest neighbors
+            local_pts = points[idxs] # Local points around the current point
 
-            # Fast PCA with NumPy
-            local_pts_centered = local_pts - np.mean(local_pts, axis=0)
-            try:
+            local_pts_centered = local_pts - np.mean(local_pts, axis=0) # Center the local points
+            try: # Perform Singular Value Decomposition (SVD)
                 _, s, _ = np.linalg.svd(local_pts_centered, full_matrices=False)
-                saliency[i] = s[-1] / np.sum(s) if np.sum(s) != 0 else 1.0
+                saliency[i] = s[-1] / np.sum(s) if np.sum(s) != 0 else 1.0 # Normalize the smallest singular value
             except:
-                saliency[i] = 1.0
+                saliency[i] = 1.0 # If SVD fails, assign maximum saliency
 
         return saliency
 
@@ -80,12 +79,11 @@ class RoadSegmenter:
             & (points[:, 1] < y_limit)
             & (points[:, 2] > z_range[0])
             & (points[:, 2] < z_range[1])
-        ]
+        ] # Filter points based on x, y, and z limits
 
-    def filter_by_saliency(self, points, k=50, percentile=10):
-        saliency = self.compute_saliency(points, k=k)
-        threshold = np.percentile(saliency, percentile)
-        return points[saliency < threshold]
+    def filter_by_saliency(self, points, saliency, percentile=10):
+        threshold = np.percentile(saliency, percentile) # Calculate the saliency threshold
+        return points[saliency < threshold] # Filter points below the saliency threshold
 
     @staticmethod
     def select_pixel_cluster(points, labels, pixel_coords, seed_pixel):
@@ -99,13 +97,13 @@ class RoadSegmenter:
         self,
         ground_points,
         seed_pixel,
-        saliency_k=35,
+        saliency,
         saliency_thresh=25,
-        eps=20.0,
+        eps=15.0,
         min_samples=10,
     ):
         road_candidates = self.filter_by_saliency(
-            ground_points, k=saliency_k, percentile=saliency_thresh
+            ground_points, saliency, percentile=saliency_thresh
         )
         proj_pixels, valid_mask = self.project_points_to_image(
             road_candidates, return_mask=True
@@ -128,41 +126,33 @@ class RoadSegmenter:
         overlay = image.copy()
         h, w = image.shape[:2]
 
-        # Φιλτράρισμα σημείων που είναι μέσα στην εικόνα
         proj_points = np.array(
             [pt for pt in proj_points if 0 <= pt[0] < w and 0 <= pt[1] < h]
         )
         if len(proj_points) < 3:
             return overlay
 
-        # Δημιουργία αρχικής μάσκας με γεμίσματα γύρω από τα σημεία
         mask = np.zeros((h, w), dtype=np.uint8)
         for x, y in proj_points.astype(np.int32):
             cv2.circle(mask, (x, y), radius=5, color=255, thickness=-1)
 
-        # Κλείσιμο για να ενωθούν περιοχές
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=5)
 
-        # Εξομάλυνση για πιο ομαλό περίγραμμα
         mask = cv2.GaussianBlur(mask, (5, 5), 0)
 
-        # Εύρεση εξωτερικών περιγραμμάτων
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         simplified_contours = [
             cv2.approxPolyDP(cnt, epsilon=2.0, closed=True) for cnt in contours
         ]
 
-        # Γέμισμα των εξωτερικών περιγραμμάτων
         filled_mask = np.zeros_like(image, dtype=np.uint8)
         cv2.drawContours(
             filled_mask, simplified_contours, -1, color, thickness=cv2.FILLED
         )
 
-        # Ανάμειξη με την εικόνα
         blended = cv2.addWeighted(filled_mask, alpha, overlay, 1, 0)
 
-        # Αποθήκευση μάσκας δρόμου για χρήση στον έλεγχο εμποδίων
         self.road_mask = mask
 
         return blended
@@ -180,15 +170,13 @@ class RoadSegmenter:
 
 
     def detect_obstacles(self, lidar_points, road_points,
-                                xy_margin=0.3, z_threshold=0.25):
+                                xy_margin=0.1, z_threshold=0.2):
         if len(road_points) == 0:
             return np.empty((0, 3))
 
-        # 1. XY όρια του δρόμου (με λίγο περιθώριο)
         x_min, x_max = np.min(road_points[:, 0]) - xy_margin, np.max(road_points[:, 0]) + xy_margin
         y_min, y_max = np.min(road_points[:, 1]) - xy_margin, np.max(road_points[:, 1]) + xy_margin
 
-        # 2. Φιλτράρισμα LiDAR σημείων εντός του XY ορίου
         in_road_xy = lidar_points[
             (lidar_points[:, 0] >= x_min) & (lidar_points[:, 0] <= x_max) &
             (lidar_points[:, 1] >= y_min) & (lidar_points[:, 1] <= y_max)
@@ -197,15 +185,12 @@ class RoadSegmenter:
         if len(in_road_xy) == 0:
             return np.empty((0, 3))
 
-        # 3. Υπολογισμός μέσου ύψους του δρόμου
         road_z_mean = np.mean(road_points[:, 2])
 
-        # 4. Επιστροφή μόνο των σημείων που είναι πάνω από τον δρόμο κατά z_threshold
         mask = in_road_xy[:, 2] > road_z_mean + z_threshold
         return in_road_xy[mask]
-
-
-
+    
+    
     def draw_obstacles(self, image, obstacles, color=(255, 0, 0)):
         proj, valid = self.project_points_to_image(obstacles, return_mask=True)
         proj = proj[valid]
@@ -213,39 +198,35 @@ class RoadSegmenter:
             cv2.circle(image, tuple(pt), 3, color, -1)
         return image
 
-    def run(self, seed_pixel=(580, 300)):
-        # 1. Φιλτράρουμε τα ground points
-        ground_points = self.filter_ground_points(self.lidar_points)
+    def run_road_segmentation(self, seed_pixel=(580, 300)):
+        ground_points = self.filter_ground_points(self.lidar_points) # Filter ground points
+        saliency = self.compute_saliency(ground_points, k=20) # Compute saliency of points
+        self.road_points = self.detect_road(ground_points, seed_pixel, saliency) # Detect road points
+        proj_road = self.project_points_to_image(self.road_points) # Project road points to image
+        self.overlay = self.visualize_projection(self.image.copy(), proj_road, color=(0, 255, 0)) # Visualize road points on the image
 
-        # 2. Ανίχνευση δρόμου με χρήση seed
-        road_points = self.detect_road(ground_points, seed_pixel)
-        self.road_points = road_points
+    def run_obstacle_detection(self, xy_margin=0.1, z_threshold=0.3):
+        obstacle_candidates = self.detect_obstacles(self.lidar_points, self.road_points,
+                                                    xy_margin=xy_margin, z_threshold=z_threshold)
 
-        # 3. Προβολή του δρόμου πάνω στην εικόνα
-        proj_road = self.project_points_to_image(road_points)
-        overlay = self.visualize_projection(self.image, proj_road, color=(0, 255, 0))
-
-        # 4. Ανίχνευση εμποδίων αυστηρά πάνω από τον δρόμο
-        obstacle_candidates = self.detect_obstacles(self.lidar_points, road_points,
-                                                        xy_margin=0.1, z_threshold=0.3)
-
-
-        # 5. Clustering με DBSCAN
         if len(obstacle_candidates) > 0:
             labels = DBSCAN(eps=1.0, min_samples=10).fit_predict(obstacle_candidates[:, :3])
-            obstacles = obstacle_candidates[labels != -1]
+            self.obstacles = obstacle_candidates[labels != -1]
         else:
-            obstacles = np.empty((0, 3))
+            self.obstacles = np.empty((0, 3))
 
-        # 6. Προβολή εμποδίων
-        overlay = self.draw_obstacles(overlay, obstacles)
+        self.overlay = self.draw_obstacles(self.overlay, self.obstacles)
 
-        if len(obstacles) > 0:
-            h, w = overlay.shape[:2]
+    def run_motion_estimation(self):
+        if self.overlay is None:
+            raise RuntimeError("Δεν έχει δημιουργηθεί εικόνα overlay. Τρέξε πρώτα road_segmentation.")
+
+        if len(self.obstacles) > 0:
+            h, w = self.overlay.shape[:2]
             center = (w // 2, h // 2)
-            cv2.circle(overlay, center, 30, (0, 0, 255), thickness=3)
+            cv2.circle(self.overlay, center, 30, (0, 0, 255), thickness=3)
             cv2.putText(
-                overlay,
+                self.overlay,
                 "Obstacle Ahead",
                 (center[0] - 50, center[1] - 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -254,28 +235,32 @@ class RoadSegmenter:
                 2,
             )
         else:
-            direction = self.estimate_motion_vector(road_points)
-            origin = np.mean(road_points, axis=0)
+            direction = self.estimate_motion_vector(self.road_points)
+            origin = np.mean(self.road_points, axis=0)
             end_point = origin + direction * 5.0
             vector_points = np.vstack([origin, end_point])
             proj_vector = self.project_points_to_image(vector_points)
             cv2.arrowedLine(
-                overlay,
+                self.overlay,
                 tuple(proj_vector[0]),
                 tuple(proj_vector[1]),
                 (0, 0, 255),
                 4,
                 tipLength=0.2,
             )
-        self.overlay = overlay
+
+    def show_overlay(self, title="Αποτελέσματα"):
+        if self.overlay is None:
+            print("Δεν υπάρχει overlay εικόνα.")
+            return
         plt.figure(figsize=(12, 6))
-        plt.imshow(overlay)
-        plt.title("Road and Obstacles Detection")
+        plt.imshow(self.overlay)
+        plt.title(title)
         plt.axis("off")
         plt.show()
 
+
     def save_results(self, path):
-        # Save Result
         save_dir = "saved_images/partB"
         os.makedirs(save_dir, exist_ok=True)
 
@@ -287,7 +272,7 @@ class RoadSegmenter:
         print(f"Image saved as: {save_path}")
 
 if __name__ == "__main__":
-    i = "um_000021"
+    i = "um_000046"
     j = f"{i}_with_wall"
     path=f"image_2/{i}.png"
     segmenter_lidar = RoadSegmenter(
@@ -295,5 +280,13 @@ if __name__ == "__main__":
         lidar_path=f"training/velodyne/{i}.bin",
         calib_path=f"calib/{i}.txt",
     )
-    segmenter_lidar.run()
+    segmenter_lidar.run_road_segmentation(seed_pixel=(580, 300))
+    segmenter_lidar.show_overlay("Α: Αναγνώριση Δρόμου")
+        
+    segmenter_lidar.run_obstacle_detection()
+    segmenter_lidar.show_overlay("Β: Δρόμος + Εμπόδια")
+    
+    segmenter_lidar.run_motion_estimation()
+    segmenter_lidar.show_overlay("Γ: Τελική Εκτίμηση (Πορεία ή Εμπόδιο)")
+
     segmenter_lidar.save_results(path)
