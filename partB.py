@@ -2,6 +2,7 @@ import os
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
+import open3d as o3d
 from sklearn.decomposition import PCA
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import KDTree
@@ -50,20 +51,32 @@ class RoadSegmenter:
             return proj.T.astype(int)
 
     @staticmethod
+    def show_points_open3d(points):
+        pc = o3d.geometry.PointCloud()
+        pc.points = o3d.utility.Vector3dVector(points)
+        o3d.visualization.draw_geometries([pc])
+
+    @staticmethod
     def compute_saliency(points, k=30):
-        saliency = np.zeros(len(points)) # Initialize saliency array
-        tree = KDTree(points) # Build KDTree for fast nearest neighbor search
+        saliency = np.zeros(len(points))  # Initialize saliency array
+        tree = KDTree(points)  # Build KDTree for fast nearest neighbor search
 
-        for i in range(len(points)): # Iterate through each point
-            idxs = tree.query(points[i : i + 1], k=k, return_distance=False)[0] # Get k nearest neighbors
-            local_pts = points[idxs] # Local points around the current point
+        for i in range(len(points)):  # Iterate through each point
+            idxs = tree.query(points[i : i + 1], k=k, return_distance=False)[
+                0
+            ]  # Get k nearest neighbors
+            local_pts = points[idxs]  # Local points around the current point
 
-            local_pts_centered = local_pts - np.mean(local_pts, axis=0) # Center the local points
-            try: # Perform Singular Value Decomposition (SVD)
+            local_pts_centered = local_pts - np.mean(
+                local_pts, axis=0
+            )  # Center the local points
+            try:  # Perform Singular Value Decomposition (SVD)
                 _, s, _ = np.linalg.svd(local_pts_centered, full_matrices=False)
-                saliency[i] = s[-1] / np.sum(s) if np.sum(s) != 0 else 1.0 # Normalize the smallest singular value
+                saliency[i] = (
+                    s[-1] / np.sum(s) if np.sum(s) != 0 else 1.0
+                )  # Normalize the smallest singular value
             except:
-                saliency[i] = 1.0 # If SVD fails, assign maximum saliency
+                saliency[i] = 1.0  # If SVD fails, assign maximum saliency
 
         return saliency
 
@@ -78,19 +91,29 @@ class RoadSegmenter:
             & (points[:, 1] < y_limit)
             & (points[:, 2] > z_range[0])
             & (points[:, 2] < z_range[1])
-        ] # Filter points based on x, y, and z limits
+        ]  # Filter points based on x, y, and z limits
 
     def filter_by_saliency(self, points, saliency, percentile=10):
-        threshold = np.percentile(saliency, percentile) # Calculate the saliency threshold
-        return points[saliency < threshold] # Filter points below the saliency threshold
+        threshold = np.percentile(
+            saliency, percentile
+        )  # Calculate the saliency threshold
+        return points[
+            saliency < threshold
+        ]  # Filter points below the saliency threshold
 
     @staticmethod
     def select_pixel_cluster(points, labels, pixel_coords, seed_pixel):
         if len(labels) == 0 or np.all(labels == -1):
             return np.empty((0, 3))
-        distances = np.linalg.norm(pixel_coords - np.array(seed_pixel), axis=1)
-        seed_label = labels[np.argmin(distances)]
-        return points[labels == seed_label]
+        distances = np.linalg.norm(
+            pixel_coords - np.array(seed_pixel), axis=1
+        )  # Calculate distances from the seed pixel
+        seed_label = labels[
+            np.argmin(distances)
+        ]  # Find the label of the closest cluster to the seed pixel
+        return points[
+            labels == seed_label
+        ]  # Select points belonging to the cluster of the seed pixel
 
     def detect_road(
         self,
@@ -107,78 +130,112 @@ class RoadSegmenter:
         proj_pixels, valid_mask = self.project_points_to_image(
             road_candidates, return_mask=True
         )
-        road_candidates = road_candidates[valid_mask]
-        proj_pixels = self.project_points_to_image(road_candidates)
-        labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(proj_pixels)
-        return self.select_pixel_cluster(
+        road_candidates = road_candidates[
+            valid_mask
+        ]  # Filter road candidates based on valid projection mask
+        proj_pixels = self.project_points_to_image(
+            road_candidates
+        )  # Project road candidates to image pixels
+        labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(
+            proj_pixels
+        )  # Cluster the projected pixels using DBSCAN
+        return self.select_pixel_cluster(  # Select the cluster of points corresponding to the seed pixel
             road_candidates, labels, proj_pixels, seed_pixel
         )
 
     @staticmethod
     def estimate_motion_vector(road_points):
-        pca = PCA(n_components=3)
-        pca.fit(road_points)
-        direction = pca.components_[0]
-        return direction / np.linalg.norm(direction)
+        pca = PCA(n_components=3)  # Perform PCA to estimate the motion vector
+        pca.fit(road_points)  # Get the principal components
+        direction = pca.components_[0]  # Normalize the direction vector
+        return direction / np.linalg.norm(
+            direction
+        )  # Return the normalized direction vector
 
     def visualize_projection(self, image, proj_points, color=(0, 255, 0), alpha=0.2):
         overlay = image.copy()
         h, w = image.shape[:2]
 
-        proj_points = np.array(
+        proj_points = np.array(  # Project points to image coordinates
             [pt for pt in proj_points if 0 <= pt[0] < w and 0 <= pt[1] < h]
         )
         if len(proj_points) < 3:
             return overlay
 
-        mask = np.zeros((h, w), dtype=np.uint8)
-        for x, y in proj_points.astype(np.int32):
+        mask = np.zeros(
+            (h, w), dtype=np.uint8
+        )  # Initialize a mask for the projected points
+        for x, y in proj_points.astype(
+            np.int32
+        ):  # Draw circles on the mask for each projected point
             cv2.circle(mask, (x, y), radius=5, color=255, thickness=-1)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=5)
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (7, 7)
+        )  # Create a morphological kernel
+        mask = cv2.morphologyEx(
+            mask, cv2.MORPH_CLOSE, kernel, iterations=5
+        )  # Apply morphological closing to the mask
 
-        mask = cv2.GaussianBlur(mask, (5, 5), 0)
+        mask = cv2.GaussianBlur(mask, (5, 5), 0)  # Smooth the mask to reduce noise
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        simplified_contours = [
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )  # Find contours in the mask
+        simplified_contours = [  # Simplify the contours using polygon approximation
             cv2.approxPolyDP(cnt, epsilon=2.0, closed=True) for cnt in contours
         ]
 
-        filled_mask = np.zeros_like(image, dtype=np.uint8)
+        filled_mask = np.zeros_like(
+            image, dtype=np.uint8
+        )  # Create a filled mask for the contours
         cv2.drawContours(
             filled_mask, simplified_contours, -1, color, thickness=cv2.FILLED
-        )
+        )  # Draw the contours on the filled mask
 
-        blended = cv2.addWeighted(filled_mask, alpha, overlay, 1, 0)
+        blended = cv2.addWeighted(
+            filled_mask, alpha, overlay, 1, 0
+        )  # Blend the filled mask with the original image
 
         self.road_mask = mask
 
         return blended
 
     def points_within_road(self, lidar_points, road_points, margin=0.5):
-        x_min, x_max = np.min(road_points[:, 0]), np.max(road_points[:, 0])
-        y_min, y_max = np.min(road_points[:, 1]), np.max(road_points[:, 1])
+        x_min, x_max = np.min(road_points[:, 0]), np.max(
+            road_points[:, 0]
+        )  # Get min and max x-coordinates of road points
+        y_min, y_max = np.min(road_points[:, 1]), np.max(
+            road_points[:, 1]
+        )  # Get min and max y-coordinates of road points
 
         return lidar_points[
-            (lidar_points[:, 0] >= x_min - margin) &
-            (lidar_points[:, 0] <= x_max + margin) &
-            (lidar_points[:, 1] >= y_min - margin) &
-            (lidar_points[:, 1] <= y_max + margin)
+            (lidar_points[:, 0] >= x_min - margin)
+            & (lidar_points[:, 0] <= x_max + margin)
+            & (lidar_points[:, 1] >= y_min - margin)
+            & (lidar_points[:, 1] <= y_max + margin)
         ]
 
-
-    def detect_obstacles(self, lidar_points, road_points,
-                                xy_margin=0.1, z_threshold=0.2):
+    def detect_obstacles(
+        self, lidar_points, road_points, xy_margin=0.1, z_threshold=0.2
+    ):
         if len(road_points) == 0:
             return np.empty((0, 3))
 
-        x_min, x_max = np.min(road_points[:, 0]) - xy_margin, np.max(road_points[:, 0]) + xy_margin
-        y_min, y_max = np.min(road_points[:, 1]) - xy_margin, np.max(road_points[:, 1]) + xy_margin
+        x_min, x_max = (
+            np.min(road_points[:, 0]) - xy_margin,
+            np.max(road_points[:, 0]) + xy_margin,
+        )
+        y_min, y_max = (
+            np.min(road_points[:, 1]) - xy_margin,
+            np.max(road_points[:, 1]) + xy_margin,
+        )
 
         in_road_xy = lidar_points[
-            (lidar_points[:, 0] >= x_min) & (lidar_points[:, 0] <= x_max) &
-            (lidar_points[:, 1] >= y_min) & (lidar_points[:, 1] <= y_max)
+            (lidar_points[:, 0] >= x_min)
+            & (lidar_points[:, 0] <= x_max)
+            & (lidar_points[:, 1] >= y_min)
+            & (lidar_points[:, 1] <= y_max)
         ]
 
         if len(in_road_xy) == 0:
@@ -188,8 +245,7 @@ class RoadSegmenter:
 
         mask = in_road_xy[:, 2] > road_z_mean + z_threshold
         return in_road_xy[mask]
-    
-    
+
     def draw_obstacles(self, image, obstacles, color=(255, 0, 0)):
         proj, valid = self.project_points_to_image(obstacles, return_mask=True)
         proj = proj[valid]
@@ -198,18 +254,35 @@ class RoadSegmenter:
         return image
 
     def run_road_segmentation(self, seed_pixel=(580, 300)):
-        ground_points = self.filter_ground_points(self.lidar_points) # Filter ground points
-        saliency = self.compute_saliency(ground_points, k=20) # Compute saliency of points
-        self.road_points = self.detect_road(ground_points, seed_pixel, saliency) # Detect road points
-        proj_road = self.project_points_to_image(self.road_points) # Project road points to image
-        self.overlay = self.visualize_projection(self.image.copy(), proj_road, color=(0, 255, 0)) # Visualize road points on the image
+        ground_points = self.filter_ground_points(
+            self.lidar_points
+        )  # Filter ground points
+        self.show_points_open3d(ground_points)  # Visualize ground points using Open3D
+        saliency = self.compute_saliency(
+            ground_points, k=20
+        )  # Compute saliency of points
+        self.road_points = self.detect_road(
+            ground_points, seed_pixel, saliency
+        )  # Detect road points
+        proj_road = self.project_points_to_image(
+            self.road_points
+        )  # Project road points to image
+        self.overlay = self.visualize_projection(
+            self.image.copy(), proj_road, color=(0, 255, 0)
+        )  # Visualize road points on the image
 
     def run_obstacle_detection(self, xy_margin=0.1, z_threshold=0.3):
-        obstacle_candidates = self.detect_obstacles(self.lidar_points, self.road_points,
-                                                    xy_margin=xy_margin, z_threshold=z_threshold)
+        obstacle_candidates = self.detect_obstacles(
+            self.lidar_points,
+            self.road_points,
+            xy_margin=xy_margin,
+            z_threshold=z_threshold,
+        )
 
         if len(obstacle_candidates) > 0:
-            labels = DBSCAN(eps=1.0, min_samples=10).fit_predict(obstacle_candidates[:, :3])
+            labels = DBSCAN(eps=1.0, min_samples=10).fit_predict(
+                obstacle_candidates[:, :3]
+            )
             self.obstacles = obstacle_candidates[labels != -1]
         else:
             self.obstacles = np.empty((0, 3))
@@ -258,33 +331,33 @@ class RoadSegmenter:
         plt.axis("off")
         plt.show()
 
-
     def save_results(self, path):
         save_dir = "saved_images/partB"
         os.makedirs(save_dir, exist_ok=True)
 
         base_name = os.path.basename(path)
         save_path = os.path.join(save_dir, base_name)
-        
+
         bgr_overlay = cv2.cvtColor(self.overlay, cv2.COLOR_RGB2BGR)
         cv2.imwrite(save_path, bgr_overlay)
         print(f"Image saved as: {save_path}")
 
+
 if __name__ == "__main__":
     i = "um_000047"
     j = f"{i}_with_wall"
-    path=f"image_2/{i}.png"
+    path = f"selected_images/{i}.png"
     segmenter_lidar = RoadSegmenter(
-        img_path=f"image_2/{i}.png",
-        lidar_path=f"training/velodyne/{i}.bin",
-        calib_path=f"calib/{i}.txt",
+        img_path=path,
+        lidar_path=f"selected_lidar/{i}.bin",
+        calib_path=f"selected_lidar/{i}.txt",
     )
     segmenter_lidar.run_road_segmentation(seed_pixel=(580, 300))
     segmenter_lidar.show_overlay("Road Detection")
-        
+
     segmenter_lidar.run_obstacle_detection()
     segmenter_lidar.show_overlay("Obstacle Detection")
-    
+
     segmenter_lidar.run_motion_estimation()
     segmenter_lidar.show_overlay("Final Result")
 
