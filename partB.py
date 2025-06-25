@@ -4,7 +4,6 @@ import cv2
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.cluster import DBSCAN
-import open3d as o3d
 from sklearn.neighbors import KDTree
 
 
@@ -219,7 +218,7 @@ class RoadSegmenter:
 
     def run_motion_estimation(self):
         if self.overlay is None:
-            raise RuntimeError("Δεν έχει δημιουργηθεί εικόνα overlay. Τρέξε πρώτα road_segmentation.")
+            raise RuntimeError("Overlay image has not been generated.")
 
         if len(self.obstacles) > 0:
             h, w = self.overlay.shape[:2]
@@ -249,9 +248,9 @@ class RoadSegmenter:
                 tipLength=0.2,
             )
 
-    def show_overlay(self, title="Αποτελέσματα"):
+    def show_overlay(self, title="Results"):
         if self.overlay is None:
-            print("Δεν υπάρχει overlay εικόνα.")
+            print("No overlay image exists.")
             return
         plt.figure(figsize=(12, 6))
         plt.imshow(self.overlay)
@@ -272,7 +271,7 @@ class RoadSegmenter:
         print(f"Image saved as: {save_path}")
 
 if __name__ == "__main__":
-    i = "um_000046"
+    i = "um_000047"
     j = f"{i}_with_wall"
     path=f"image_2/{i}.png"
     segmenter_lidar = RoadSegmenter(
@@ -281,12 +280,12 @@ if __name__ == "__main__":
         calib_path=f"calib/{i}.txt",
     )
     segmenter_lidar.run_road_segmentation(seed_pixel=(580, 300))
-    segmenter_lidar.show_overlay("Α: Αναγνώριση Δρόμου")
+    segmenter_lidar.show_overlay("Road Detection")
         
     segmenter_lidar.run_obstacle_detection()
-    segmenter_lidar.show_overlay("Β: Δρόμος + Εμπόδια")
+    segmenter_lidar.show_overlay("Obstacle Detection")
     
     segmenter_lidar.run_motion_estimation()
-    segmenter_lidar.show_overlay("Γ: Τελική Εκτίμηση (Πορεία ή Εμπόδιο)")
+    segmenter_lidar.show_overlay("Final Result")
 
     segmenter_lidar.save_results(path)

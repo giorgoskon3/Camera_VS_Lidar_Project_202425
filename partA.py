@@ -4,7 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from ultralytics import YOLO
 from sklearn.decomposition import PCA
-from sklearn.cluster import DBSCAN
 
 class RoadSegmenter:
     def __init__(self, path):
@@ -24,8 +23,8 @@ class RoadSegmenter:
         self.gray = cv2.cvtColor(self.image, cv2.COLOR_BGR2GRAY)
         self.right_gray = cv2.cvtColor(self.right_image, cv2.COLOR_BGR2GRAY)
         # Optionally apply Clahe filter
-        # clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8,8))
-        # self.gray = clahe.apply(self.gray)
+        clahe = cv2.createCLAHE(clipLimit=0.5, tileGridSize=(8,8))
+        self.gray = clahe.apply(self.gray)
     
     def detect_edges(self):
         blurred = cv2.GaussianBlur(self.gray, (5, 5), 5) # Apply Gaussian blur to reduce noise
@@ -39,13 +38,13 @@ class RoadSegmenter:
         mask = np.zeros((height + 2, width + 2), np.uint8) # Create a mask for flood fill
         flooded = self.gray.copy()
         
-        cutoff_row = int(height * 0.5) # Define a cutoff row for the flood fill
+        cutoff_row = int(height * 0.6) # Define a cutoff row for the flood fill
         flooded[:cutoff_row, :] = 0 # Set the upper half of the image to zero
 
         cv2.floodFill(flooded, mask, seed_point, 125, loDiff=5, upDiff=5, flags=8) # Perform flood fill to segment the road region
         self.region = mask[1:-1, 1:-1] # Remove the border added by flood fill
         
-        self.filled_region = cv2.morphologyEx(self.region, cv2.MORPH_CLOSE, np.ones((6, 6), np.uint8)) # Close small holes in the filled region
+        self.filled_region = cv2.morphologyEx(self.region, cv2.MORPH_CLOSE, np.ones((12, 12), np.uint8)) # Close small holes in the filled region
 
     def colorize_lanes(self, alpha=0.2):
         road_mask = self.filled_region.astype(np.uint8) * 255 # Convert the filled region το 0/255 mask
@@ -116,85 +115,6 @@ class RoadSegmenter:
                 cv2.rectangle(self.result, (x1, y1), (x2, y2), (0, 255, 255), 2)
 
         print(f"Found {len(self.obstacles)} obstacles intersecting the road.")
-
-    def detect_obstacles_disparity(self, min_disparity=16, block_size=15, depth_thresh=48):
-
-        # Δημιουργία stereo matcher
-        stereo = cv2.StereoSGBM_create(
-            minDisparity=min_disparity,
-            numDisparities=64,
-            blockSize=block_size,
-            P1=8 * 3 * block_size ** 2,
-            P2=32 * 3 * block_size ** 2,
-            mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
-        )
-
-        # Υπολογισμός disparity map
-        disparity = stereo.compute(self.gray, self.right_gray).astype(np.float32) / 16.0
-        self.disparity = disparity
-        
-        # Μάσκα για το δρόμο
-        road_mask = self.filled_region.astype(bool)
-
-        # Κατώφλι βάθους για εμπόδια: μικρό disparity → μεγάλο βάθος → μακριά
-        obstacle_mask = (disparity < depth_thresh) & (disparity > 0) & road_mask
-
-        # Ανίχνευση περιοχών
-        obstacle_mask_uint8 = (obstacle_mask * 255).astype(np.uint8)
-        contours, _ = cv2.findContours(obstacle_mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        self.obstacles = []
-
-        for cnt in contours:
-            x, y, w, h = cv2.boundingRect(cnt)
-            if w * h > 100:  # Απόρριψη μικρών θορύβων
-                self.obstacles.append((x, y, x + w, y + h))
-                cv2.rectangle(self.result, (x, y), (x + w, y + h), (0, 255, 255), 2)
-
-        print(f"Disparity-based: Found {len(self.obstacles)} obstacles on the road.")
-
-    def detect_obstacles_from_disparity(self, eps=10, min_samples=20):
-        disp = self.disparity.copy()
-        valid_mask = (disp > 0) & (disp < 96)  # valid disparity values only
-
-        coords = np.column_stack(np.where(valid_mask))
-        disparity_values = disp[valid_mask].reshape(-1, 1)
-        features = np.hstack([coords, disparity_values])
-
-        if len(features) == 0:
-            print("No valid disparity points found.")
-            return
-
-        db = DBSCAN(eps=eps, min_samples=min_samples).fit(features)
-        labels = db.labels_
-        unique_labels = set(labels)
-        
-        self.obstacles = []
-
-        for label in unique_labels:
-            if label == -1:
-                continue  # Noise
-            points = coords[labels == label]
-            x_vals = points[:, 1]
-            y_vals = points[:, 0]
-            x1, y1 = np.min(x_vals), np.min(y_vals)
-            x2, y2 = np.max(x_vals), np.max(y_vals)
-
-            self.obstacles.append((x1, y1, x2, y2))
-            cv2.rectangle(self.result, (x1, y1), (x2, y2), (0, 255, 255), 2)
-
-        print(f"DBSCAN: Found {len(self.obstacles)} obstacle regions based on disparity.")
-
-
-    def show_disparity_map(self):
-        disp_display = cv2.normalize(self.disparity, None, 0, 255, cv2.NORM_MINMAX)
-        disp_display = np.uint8(disp_display)
-
-        plt.figure(figsize=(8, 6))
-        plt.imshow(disp_display, cmap='plasma')  # Μπορείς να δοκιμάσεις και 'gray'
-        plt.title("Disparity Map", fontsize=14, fontweight='bold')
-        plt.axis('off')
-        plt.show()
 
 
     def compute_motion_vector_pca(self):
@@ -272,9 +192,6 @@ class RoadSegmenter:
         self.show_region_result()
         
         # b) Detect obstacles using YOLO
-        # self.detect_obstacles_disparity()
-        # self.detect_obstacles_from_disparity()
-        # self.show_disparity_map()
         self.detect_obstacles()
         
         # c) Compute motion vector using PCA
@@ -282,7 +199,7 @@ class RoadSegmenter:
         self.show_final_result()
     
 if __name__ == "__main__":
-    path = "image_2/um_000000.png"
+    path = "selected_images/um_000047.png"
     segmenter = RoadSegmenter(path)
     segmenter.run()
-    # segmenter.save_results(path)
+    segmenter.save_results(path)
