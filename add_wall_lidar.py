@@ -21,7 +21,7 @@ def visualize_point_cloud(points):
     o3d.visualization.draw_geometries([pcd])
 
 def main():
-    i = "umm_000019"
+    i = "um_000046"
     original_file = f"training/velodyne/{i}.bin"
     output_file = f"training/velodyne/{i}_with_wall.bin"
 
