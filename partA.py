@@ -206,7 +206,7 @@ class RoadSegmenter_CAMERA:
         self.show_final_result()
     
 if __name__ == "__main__":
-    path = "road_with_wall/um_000003.png"
+    path = "road_with_wall/um_000047.png"
     segmenter = RoadSegmenter_CAMERA(path)
     segmenter.run()
     segmenter.save_results(path)
