@@ -5,31 +5,30 @@ import matplotlib.pyplot as plt
 from ultralytics import YOLO
 from sklearn.decomposition import PCA
 
-class RoadSegmenter:
+class RoadSegmenter_CAMERA:
     def __init__(self, path):
         self.path = path
         self.image = None
-        self.right_image = None
         self.gray = None
         self.result = None
 
-    def load_images(self):
+    def load_image(self):
         self.image = cv2.imread(self.path) # Load the image
-        self.right_image = cv2.imread(self.path.replace("image_2", "right_images")) # Load the corresponding right image
         if self.image is None: # Check if the image was loaded successfully
             raise ValueError("Could not load the image.")
-
-        # Convert to grayscale
-        self.gray = cv2.cvtColor(self.image, cv2.COLOR_BGR2GRAY)
-        self.right_gray = cv2.cvtColor(self.right_image, cv2.COLOR_BGR2GRAY)
-        # Optionally apply Clahe filter
-        clahe = cv2.createCLAHE(clipLimit=0.5, tileGridSize=(8,8))
-        self.gray = clahe.apply(self.gray)
     
-    def detect_edges(self):
-        blurred = cv2.GaussianBlur(self.gray, (5, 5), 5) # Apply Gaussian blur to reduce noise
-        self.edges = cv2.Canny(blurred, 100, 180) # Detect edges using Canny edge detection
-
+    def preprocessing(self):
+        self.gray = cv2.cvtColor(self.image, cv2.COLOR_BGR2GRAY) # Convert to grayscale
+        clahe = cv2.createCLAHE(clipLimit=0.5, tileGridSize=(8,8))
+        self.gray = clahe.apply(self.gray) # Apply Clahe filter
+    
+    def show_preprocessed_image(self):
+        plt.figure(figsize=(8, 6))
+        plt.imshow(self.gray, cmap='gray')
+        plt.title("Preprocessed Image", fontsize=14, fontweight='bold')
+        plt.axis('off')
+        plt.show()
+        
     def region_grow(self):
         height, width = self.gray.shape # Get the dimensions of the grayscale image
         seed_point = (width // 2, height - 30) # Define a seed point for region growing
@@ -46,6 +45,14 @@ class RoadSegmenter:
         
         self.filled_region = cv2.morphologyEx(self.region, cv2.MORPH_CLOSE, np.ones((12, 12), np.uint8)) # Close small holes in the filled region
 
+    def show_region_of_interest(self):
+        plt.figure(figsize=(8, 6))
+        plt.imshow(self.filled_region, cmap='gray')
+        plt.title("Region Of Interest", fontsize=14, fontweight='bold')
+        plt.axis('off')
+        plt.show()
+    
+        
     def colorize_lanes(self, alpha=0.2):
         road_mask = self.filled_region.astype(np.uint8) * 255 # Convert the filled region το 0/255 mask
         height, _ = road_mask.shape # Get the dimensions of the road mask
@@ -135,7 +142,7 @@ class RoadSegmenter:
         if len(self.obstacles) == 0:
             scale = 100
             end_point = (int(center[0] + scale * direction[0]), int(center[1] + scale * direction[1]))
-            cv2.arrowedLine(self.result, tuple(center), end_point, (255, 255, 255), 3, tipLength=0.2)
+            cv2.arrowedLine(self.result, tuple(center), end_point, (255, 0, 0), 3, tipLength=0.2)
         else:
             cv2.circle(self.result, tuple(center), 30, (0, 0, 255), thickness=3)
             cv2.putText(self.result, "Obstacle Ahead", (center[0] - 50, center[1] - 40),
@@ -146,14 +153,14 @@ class RoadSegmenter:
     def show_original_image(self):
         plt.figure(figsize=(8, 6))
         plt.imshow(cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB))
-        plt.title("1. Αρχική Εικόνα", fontsize=14, fontweight='bold')
+        plt.title("Original Image", fontsize=14, fontweight='bold')
         plt.axis('off')
         plt.show()
 
     def show_region_result(self):
         plt.figure(figsize=(8, 6))
         plt.imshow(cv2.cvtColor(self.result, cv2.COLOR_BGR2RGB))
-        plt.title("2. Ανίχνευση Δρόμου με Region Growing", fontsize=14, fontweight='bold')
+        plt.title("Road Detection with Region Growing", fontsize=14, fontweight='bold')
         plt.axis('off')
         plt.show()
 
@@ -162,9 +169,9 @@ class RoadSegmenter:
         plt.figure(figsize=(8, 6))
         plt.imshow(cv2.cvtColor(self.result, cv2.COLOR_BGR2RGB))
         if len(self.obstacles) > 0:
-            title = "3. Εμπόδια πάνω στον Δρόμο"
+            title = "Obstacles on the road"
         else:
-            title = "3. Διάνυσμα Κίνησης με PCA"
+            title = "Motion Vector using PCA"
         plt.title(title, fontsize=14, fontweight='bold')
         plt.axis('off')
         plt.show()
@@ -172,7 +179,7 @@ class RoadSegmenter:
         
     def save_results(self, path):
         # Save Result
-        save_dir = "saved_images/partA"
+        save_dir = "saved_images/partA/road_with_wall"
         os.makedirs(save_dir, exist_ok=True)
 
         base_name = os.path.basename(path)
@@ -183,10 +190,10 @@ class RoadSegmenter:
 
     def run(self):
         # Load Both Left and Right Images and convert to grayscale
-        self.load_images()
+        self.load_image()
+        self.preprocessing()
         self.show_original_image()
         # a) Using growing region
-        self.detect_edges()
         self.region_grow()
         self.colorize_lanes()
         self.show_region_result()
@@ -199,7 +206,7 @@ class RoadSegmenter:
         self.show_final_result()
     
 if __name__ == "__main__":
-    path = "selected_images/um_000047.png"
-    segmenter = RoadSegmenter(path)
+    path = "road_with_wall/um_000003.png"
+    segmenter = RoadSegmenter_CAMERA(path)
     segmenter.run()
     segmenter.save_results(path)
