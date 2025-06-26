@@ -140,17 +140,17 @@ class RoadSegmenter_CAMERA:
         for y, x in enumerate(self.mid_x_vals):
             if x != -1:
                 mid_points.append([x, y])
-        # PCA
+
         pca = PCA(n_components=2)
-        pca.fit(mid_points)
-        direction = pca.components_[0]
+        pca.fit(mid_points) # Fit PCA to the midline points
+        direction = pca.components_[0] # Get the first principal component
 
         if direction[1] > 0:
-            direction = -direction
+            direction = -direction # Ensure the direction is pointing upwards
 
         center = np.mean(mid_points, axis=0).astype(int)
 
-        if len(self.obstacles) == 0:
+        if len(self.obstacles) == 0: # No obstacles detected, draw motion vector
             scale = 100
             end_point = (
                 int(center[0] + scale * direction[0]),
@@ -159,7 +159,7 @@ class RoadSegmenter_CAMERA:
             cv2.arrowedLine(
                 self.result, tuple(center), end_point, (255, 0, 0), 3, tipLength=0.2
             )
-        else:
+        else: # Obstacles detected, draw circle and text "Obstacle Ahead"
             cv2.circle(self.result, tuple(center), 30, (0, 0, 255), thickness=3)
             cv2.putText(
                 self.result,
@@ -215,6 +215,7 @@ class RoadSegmenter_CAMERA:
         self.load_image()
         self.preprocessing()
         self.show_original_image()
+        
         # i) Using growing region
         self.region_grow()
         self.colorize_lanes()
