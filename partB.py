@@ -344,21 +344,30 @@ class RoadSegmenter:
 
 
 if __name__ == "__main__":
-    i = "um_000047"
+    i = "um_000047" # Change this to the desired image path
     j = f"{i}_with_wall"
     path = f"selected_images/{i}.png"
     segmenter_lidar = RoadSegmenter(
         img_path=path,
-        lidar_path=f"selected_lidar/{i}.bin",
+        lidar_path=f"selected_lidar/{i}.bin",  # Change i to j if you want to use the wall-added lidar data for viii)
         calib_path=f"selected_lidar/{i}.txt",
     )
+    
+    
+    # v) Detect Road and show Overlay and LIDAR points using open3d
     segmenter_lidar.run_road_segmentation(seed_pixel=(580, 300))
     segmenter_lidar.show_overlay("Road Detection")
 
+    
+    # vi) Detect Obstacles and show Overlay
     segmenter_lidar.run_obstacle_detection()
     segmenter_lidar.show_overlay("Obstacle Detection")
 
+    
+    # vii) Estimate Motion Vector or show "Obstacle Ahead"
     segmenter_lidar.run_motion_estimation()
     segmenter_lidar.show_overlay("Final Result")
-
-    segmenter_lidar.save_results(path)
+    
+    
+    # viii) Import road_with_wall lidar data and run the same processes (iii-vii)
+    # segmenter_lidar.save_results(path) # Uncomment to save the result
