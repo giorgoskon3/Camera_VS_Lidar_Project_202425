@@ -189,24 +189,26 @@ class RoadSegmenter_CAMERA:
         print(f"Image saved as: {save_path}")
 
     def run(self):
-        # Load Both Left and Right Images and convert to grayscale
+        # Load Image and convert to grayscale
         self.load_image()
         self.preprocessing()
         self.show_original_image()
-        # a) Using growing region
+        # i) Using growing region
         self.region_grow()
         self.colorize_lanes()
         self.show_region_result()
         
-        # b) Detect obstacles using YOLO
+        # ii) Detect obstacles using YOLO
         self.detect_obstacles()
         
-        # c) Compute motion vector using PCA
+        # iii) Compute motion vector using PCA
         self.compute_motion_vector_pca()
         self.show_final_result()
+        
+        # iv) Import road_with_wall image and run the same process
     
 if __name__ == "__main__":
-    path = "road_with_wall/um_000047.png"
+    path = "selected_images/um_000047.png" # Change selected_image to road_with_wall for iv)
     segmenter = RoadSegmenter_CAMERA(path)
     segmenter.run()
-    segmenter.save_results(path)
+    # segmenter.save_results(path) # Uncomment to save the result
