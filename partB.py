@@ -8,7 +8,7 @@ from sklearn.cluster import DBSCAN
 from sklearn.neighbors import KDTree
 
 
-class RoadSegmenter:
+class RoadSegmenter_LIDAR:
     def __init__(self, img_path, lidar_path, calib_path):
         self.image = self.load_image(img_path)
         self.lidar_points = self.load_lidar_points(lidar_path)
@@ -347,7 +347,7 @@ if __name__ == "__main__":
     i = "um_000047" # Change this to the desired image path
     j = f"{i}_with_wall"
     path = f"selected_images/{i}.png"
-    segmenter_lidar = RoadSegmenter(
+    segmenter_lidar = RoadSegmenter_LIDAR(
         img_path=path,
         lidar_path=f"selected_lidar/{i}.bin",  # Change i to j if you want to use the wall-added lidar data for viii)
         calib_path=f"selected_lidar/{i}.txt",
